@@ -1,0 +1,44 @@
+// Last Modified : Tue Oct 10 12:02:46 2006
+
+#ifndef _UTIL_H
+#define _UTIL_H
+
+#define NMAX  16
+#define Pi 3.14159265358979323846
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <complex.h>
+
+void randDM(int N, complex rho[NMAX][NMAX]);
+void randUM(int N, complex U[NMAX][NMAX]);
+    
+void ENijM(int N, int i, int j, int r, int khi_ox, complex ENij[NMAX][NMAX]);
+void randUM_PRA(int N, complex U[NMAX][NMAX]);
+void randDM_PRA(int N, complex U[NMAX][NMAX]);
+void randrhoM_PRA(int N, complex U[NMAX][NMAX]);
+
+void printM(FILE *fp, int N, complex rho[NMAX][NMAX], int n);
+void printV(FILE *fp, int N, complex b[NMAX], int n);
+
+int clearM(complex M[NMAX][NMAX]);
+int eyeM(int N, complex M[NMAX][NMAX]);
+
+int clearV(complex V[NMAX]);
+
+int matrixop(char transA, char transB, int N, complex ALPHA,
+             complex A[NMAX][NMAX], complex B[NMAX][NMAX],
+             complex BETA, complex C[NMAX][NMAX]);
+
+int eigval(int N, complex A[NMAX][NMAX], complex b[NMAX]);
+int eigvec(int N, complex A[NMAX][NMAX], complex V[NMAX][NMAX], complex b[NMAX]);
+
+int reorder_eigvec(int N, complex V[NMAX][NMAX], complex b[NMAX]);
+
+void srand48bytime();
+void disclaimer();
+
+void test_utils();
+
+#endif // _UTIL_H
+

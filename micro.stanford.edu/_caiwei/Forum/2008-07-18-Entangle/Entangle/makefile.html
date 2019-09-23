@@ -1,0 +1,19 @@
+CC = gcc
+
+all: cgr7 optdecomp
+
+%.o:%.c
+	$(CC) -c $<
+
+optdecomp: optdecomp.c util.o
+	$(CC) -o $@ $^ -lm -llapack
+
+cgr7: cgr7.c util.o
+	$(CC) -o $@ $^ -lm -llapack
+
+testlapack: testlapack.c
+	$(CC) -o $@ $< -lm -llapack
+
+clean:
+	rm -f *.o optdecomp
+	rm -f *.o cgr7

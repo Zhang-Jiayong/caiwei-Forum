@@ -1,0 +1,401 @@
+// Last Modified : Thu Oct 19 11:36:18 2006
+
+#include "util.h"
+
+void randDM(int N, complex rho[NMAX][NMAX])
+{ /* prepare random density matrix */
+    int i, j, k;
+    double aU[NMAX][NMAX], p[NMAX], sum;
+
+    /* prepare probability array */
+    sum = 0;
+    for(i=0;i<N;i++)
+    {
+        p[i] = drand48();
+        sum += p[i];
+    }
+    for(i=0;i<N;i++)
+        p[i] /= sum;
+
+    /* prepare wave vectors */
+    for(i=0;i<N;i++)
+    {
+        sum = 0;
+        for(j=0;j<N;j++)
+        {
+            aU[j][i] = (2*drand48()-1) + I*(2*drand48()-1);
+            sum += creal(conj(aU[j][i])*aU[j][i]);
+        }
+        sum = sqrt(sum);
+        for(j=0;j<N;j++)
+            aU[j][i] /= sum;
+    }
+
+    /* prepare density matrix */   
+    for(j=0;j<N;j++)
+        for(k=0;k<N;k++)
+            rho[j][k] = 0;
+
+    for(i=0;i<N;i++)
+        for(j=0;j<N;j++)
+            for(k=0;k<N;k++)
+                rho[j][k]+=p[i]*(aU[j][i])*conj(aU[k][i]);
+                
+}
+    
+void printM(FILE *fp, int N, complex rho[NMAX][NMAX], int n)
+{ /* print matrix */
+    int i, j;
+    char fmt[20];
+    sprintf(fmt,"%%+.%df%%+.%df*i ",n,n);
+    for(i=0;i<N;i++)
+    {
+        for(j=0;j<N;j++)
+        {
+            fprintf(fp,fmt,rho[i][j]);
+        }
+        fprintf(fp,"\n");
+    }
+    fprintf(fp,"\n");
+}
+
+void printV(FILE *fp, int N, complex b[NMAX], int n)
+{ /* print vector */
+    int i;
+    char fmt[20];
+    sprintf(fmt,"%%+.%df%%+.%df*i ",n,n);
+    for(i=0;i<N;i++)
+        fprintf(fp,fmt,b[i]);
+    fprintf(fp,"\n\n");
+}
+
+void randUM(int N, complex U[NMAX][NMAX])
+{
+    int i, j, k;
+    complex tmp;
+    
+    /* initialize random matrix */
+    for(i=0;i<N;i++)
+        for(j=0;j<N;j++)
+            U[i][j] = (2*drand48()-1) + I*(2*drand48()-1);
+
+    /* ortho-normalize */
+    for(i=0;i<N;i++)
+    {
+        /* orthogonalize with previous bands */
+        for(j=0;j<i;j++)
+        {
+            tmp = 0;
+            for(k=0;k<N;k++)
+                tmp += conj(U[j][k]) * U[i][k];
+            for(k=0;k<N;k++)
+                U[i][k] -= tmp * U[j][k];
+        }
+
+        /* normalize */
+        tmp = 0;
+        for(k=0;k<N;k++)
+            tmp += conj(U[i][k]) * U[i][k];
+        tmp = 1.0/sqrt(tmp);
+        for(k=0;k<N;k++)
+            U[i][k] *= tmp;
+    }
+}
+
+void ENijM(int N, int i, int j, int r, int khi_ox, complex ENij[NMAX][NMAX])
+{
+    complex psy, ksi, phi, khi;
+    eyeM(N,ENij);
+    psy=drand48()*2.0*Pi;
+    if (khi_ox==0)
+	khi=drand48()*2.0*Pi;
+    else
+        khi=0;
+    ksi=drand48();
+    phi=asin(pow(ksi,1.0/(2.0*r+2.0)));
+    ENij[i][i]=cos(phi)*cexp(csqrt(-1)*psy);
+    ENij[i][j]=sin(phi)*cexp(csqrt(-1)*khi);
+    ENij[j][i]=-sin(phi)*cexp(-csqrt(-1)*khi);
+    ENij[j][j]=cos(phi)*cexp(-csqrt(-1)*psy);
+}
+
+void randUM_PRA(int N, complex U[NMAX][NMAX])
+{
+    complex alpha, Etemp[N-1][NMAX][NMAX];
+    complex Etemp2[NMAX][NMAX],Etemp3[NMAX][NMAX];
+    int i, j, k;
+    alpha=drand48()*2.0*Pi;
+    eyeM(N,U);
+    eyeM(N,Etemp3);
+    for (i=1;i<N;i++)
+    {
+         eyeM(N,Etemp[i-1]);
+     	 k=0;
+	 for (j=1;j<=i;j++)
+	 {
+	     ENijM(N,N-j-1,N-j,k,k,Etemp2);
+	     matrixop('N','N',N,1.0,Etemp2,Etemp[i-1],0.0,Etemp[i-1]);
+	     k=k+1;
+         }
+    }
+    for (i=1;i<N;i++)
+   	 matrixop('N','N',N,1.0,Etemp[N-i-1],U,0.0,U);
+    matrixop('N','N',N,cexp(csqrt(-1)*alpha),Etemp3,U,0.0,U);
+}    
+
+void randDM_PRA(int N,complex U[NMAX][NMAX])
+{
+    complex U0[NMAX][NMAX];
+    complex d[N];
+    int i;
+    randUM_PRA(N,U0);
+    for (i=0;i<N;i++)
+    	 d[i]=U0[i][1]*conj(U0[i][1]);
+    eyeM(N,U);
+    for (i=0;i<N;i++)
+         U[i][i]=d[i];
+}
+
+void randrhoM_PRA(int N,complex rho[NMAX][NMAX])
+{
+    complex U[NMAX][NMAX];
+    complex D[NMAX][NMAX],babo[NMAX][NMAX];
+    randDM_PRA(N,D);
+    randUM_PRA(N,U);
+//    printM(stdout,N,D,6);
+//    printM(stdout,N,U,6);
+//    matrixop('N','C',N,1.0,U,U,0.0,babo);
+//    printM(stdout,N,babo,6);	
+    matrixop('N','N',N,1.0,U,D,0.0,rho);
+    matrixop('N','C',N,1.0,rho,U,0.0,rho);
+}
+
+int clearM(complex M[NMAX][NMAX])
+{
+    memset(M,0,sizeof(complex)*NMAX*NMAX);
+    return 0;
+}
+
+int eyeM(int N, complex M[NMAX][NMAX])
+{
+    int i;
+    clearM(M);
+    for(i=0;i<N;i++) M[i][i] = 1.0;
+    return 0;
+}
+
+int clearV(complex V[NMAX])
+{
+    memset(V,0,sizeof(complex)*NMAX);
+    return 0;
+}
+
+int matrixop(char transA, char transB, int N, complex ALPHA,
+             complex A[NMAX][NMAX], complex B[NMAX][NMAX],
+             complex BETA, complex C[NMAX][NMAX])
+{ /* C := alpha*op(A)*op(B) + beta*C */    
+    double AT[NMAX*NMAX*2], BT[NMAX*NMAX*2], CT[NMAX*NMAX*2];
+    int i, j;
+    
+    for (i=0; i<N; i++)	/* to call a Fortran routine from C we */
+    {				/* have to transform the matrix */
+        for(j=0; j<N; j++) 
+        {
+            AT[2*(j+N*i)]  =creal(A[j][i]);
+            AT[2*(j+N*i)+1]=cimag(A[j][i]);
+            BT[2*(j+N*i)]  =creal(B[j][i]);
+            BT[2*(j+N*i)+1]=cimag(B[j][i]);
+            CT[2*(j+N*i)]  =creal(C[j][i]);
+            CT[2*(j+N*i)+1]=cimag(C[j][i]);
+        }		
+    }
+    zgemm_(&transA, &transB, &N, &N, &N, &ALPHA, AT, &N, BT, &N, &BETA, CT, &N);
+    for (i=0; i<N; i++)	/* to call a Fortran routine from C we */
+    {				/* have to transform the matrix */
+        for(j=0; j<N; j++) 
+        {
+            C[j][i] = CT[2*(j+N*i)] + I * CT[2*(j+N*i)+1] ;
+        }		
+    }
+
+    return 0;
+}
+
+int eigval(int N, complex A[NMAX][NMAX], complex b[NMAX])
+{ /* find eigenvalues of a complex matrix */
+    complex DUMMY[1][1], WORK[NMAX*2], RWORK[NMAX*2];
+    double AT[NMAX*NMAX*2];
+    int i, j, ok, c1, c2, c3;
+    char c4;
+    
+    for (i=0; i<N; i++)	/* to call a Fortran routine from C we */
+    {				/* have to transform the matrix */
+        for(j=0; j<N; j++) 
+        {
+            AT[2*(j+N*i)]=creal(A[j][i]);
+            AT[2*(j+N*i)+1]=cimag(A[j][i]);
+        }		
+    }
+    c1 = N;
+    c2 = 2*N;
+    c3 = 1;
+    c4 = 'N';
+    /* find solution using LAPACK routine ZGEEV, all the arguments have to */
+    /* be pointers and you have to add an underscore to the routine name */
+    zgeev_(&c4, &c4, &c1, AT, &c1, b, DUMMY, &c3, DUMMY, &c3, WORK, &c2, RWORK, &ok);
+
+    if (ok!=0)				/* output of eigenvalues */
+        printf("An error occured");
+    
+    return ok;
+}
+
+int eigvec(int N, complex A[NMAX][NMAX], complex V[NMAX][NMAX], complex b[NMAX])
+{ /* find eigenvalues and right eigenvectos of a complex matrix */
+    complex DUMMY[1][1], WORK[NMAX*2], RWORK[NMAX*2];
+    double AT[NMAX*NMAX*2], VT[NMAX*NMAX*2];
+    int i, j, ok, c1, c2, c3;
+    char c4, c5;
+    
+    for (i=0; i<N; i++)	/* to call a Fortran routine from C we */
+    {				/* have to transform the matrix */
+        for(j=0; j<N; j++) 
+        {
+            AT[2*(j+N*i)]=creal(A[j][i]);
+            AT[2*(j+N*i)+1]=cimag(A[j][i]);
+        }		
+    }
+    c1 = N;
+    c2 = 2*N;
+    c3 = N;
+    c4 = 'N';
+    c5 = 'V';
+    /* find solution using LAPACK routine ZGEEV, all the arguments have to */
+    /* be pointers and you have to add an underscore to the routine name */
+    zgeev_(&c4, &c5, &c1, AT, &c1, b, DUMMY, &c3, VT, &c3, WORK, &c2, RWORK, &ok);
+
+    if (ok!=0)				/* output of eigenvalues */
+        printf("An error occured");
+    
+    for (i=0; i<N; i++)	/* to call a Fortran routine from C we */
+    {				/* have to transform the matrix */
+        for(j=0; j<N; j++) 
+        {
+            V[j][i] = VT[2*(j+N*i)] + I * VT[2*(j+N*i)+1] ;
+        }		
+    }
+    
+    return ok;
+}
+
+int reorder_eigvec(int N, complex V[NMAX][NMAX], complex lambda[NMAX])
+{
+    complex tmp2[NMAX][NMAX], tmp[NMAX];
+    double lmax;
+    int flag[NMAX], ind[NMAX], i, j;
+    
+    /* sort lambda array in descending order (slow) */
+    for(i=0;i<N;i++) flag[i]=0;
+    for(i=0;i<N;i++)
+    {
+        for(j=0;j<N;j++)
+            if(flag[j]==0) break;
+        lmax=creal(lambda[j]);
+        ind[i]=j;
+        for(j=1;j<N;j++)
+        {
+            if(flag[j]!=0) continue;
+            if(lmax<creal(lambda[j]))
+            {
+                lmax=creal(lambda[j]);
+                ind[i]=j;                    
+            }
+        }
+        flag[ind[i]]=1;
+    }
+    //printf("ind=["); for(i=0;i<N;i++) printf(" %d ",i); printf("]\n");
+    /* re-order */
+    for(i=0;i<N;i++)
+    {
+        tmp[i] = lambda[ind[i]];
+        for(j=0;j<N;j++)
+        {
+            tmp2[i][j]=V[i][ind[j]];
+        }
+    }
+    for(i=0;i<N;i++)
+    {
+        lambda[i] = tmp[i];
+        for(j=0;j<N;j++)
+        {
+            V[i][j] = tmp2[i][j];
+        }
+    }
+    for(i=0;i<N;i++)
+    {
+        tmp[i]=cabs(V[i][i])/V[i][i];
+        for(j=0;j<N;j++)
+            V[j][i] *= tmp[i];
+    }
+
+
+}
+
+void srand48bytime()
+{
+    /* reset random number generator by current time */
+    srand48((unsigned int)time(NULL));
+} 
+
+void disclaimer()
+{
+    printf("\n");
+    printf("***********************************************\n");
+    printf("*        This program belongs to LLNL         *\n");
+    printf("*   written by Wei Cai, caiwei@stanford.edu   *\n");
+    printf("***********************************************\n");
+    printf("\n");
+} 
+
+
+void test_utils()
+{
+    int N;
+    complex rho[NMAX][NMAX];  /* density matrix */
+    complex   U[NMAX][NMAX];  /* unitary matrix */
+    complex   V[NMAX][NMAX];  /* eigen vectors  */
+    complex   b[NMAX];        /* complex vector */
+    complex   M[NMAX][NMAX];  /* arbitrary matrix */
+    complex   A[NMAX][NMAX];  /* arbitrary matrix */
+    
+    N = 4;
+
+    printf("rho ---\n");
+    randDM(N,rho);
+    printM(stdout,N,rho,6);
+    eigval(N,rho,b);
+    printV(stdout,N,b,6);
+    eigvec(N,rho,V,b);
+    printM(stdout,N,V,6);
+    printV(stdout,N,b,6);
+
+    printf("U   ---\n");
+    randUM(N,U);
+    printM(stdout,N,U,6);
+    eigval(N,U,b);
+    printV(stdout,N,b,6);
+    eigvec(N,U,V,b);
+    printM(stdout,N,V,6);
+    printV(stdout,N,b,6);
+
+    printf("M   ---\n");
+    clearM(M);
+    printM(stdout,N,M,6);
+    eyeM(N,M);
+    printM(stdout,N,M,6);
+
+    printf("A   ---\n");
+    matrixop('N','C',N,1.0,rho,U,0.0,A);
+    printM(stdout,N,A,6);    
+    
+}    

@@ -1,0 +1,808 @@
+/*
+ * File: cgr7.c
+ * Last Modified : Thu Sep 19 12:14:15 2007
+ *
+ * Purpose:
+ *     Compute the entanglement of a mixed state by optimization
+ *      decompose the state with an optimal Unitary matrix
+ *      that minimizes entanglement
+ *
+ * Add steep_go,sumM,Etheta, and modified algorithm by ryu
+ * Seunghwa Ryu, shryu@stanford, Wei Cai, caiwei@stanford.edu
+ *
+ * based on Matlab codes: entangleM & cgr7 (hybrid sd & cgr algorithm)
+ *
+ * Sponsored by Lawrence Livermore National Laboratory (LLNL)
+ *
+ */
+
+#include "util.h"
+
+double entanglement(int N, complex u[NMAX], int na)
+{ /* entanglement of a pure state u */
+    complex rhoAB[NMAX][NMAX], rhoA[NMAX][NMAX], lambda[NMAX];    
+    double E, lam[NMAX];
+    int i, j, k, n,nb;
+
+    for(i=0;i<N;i++)
+        for(j=0;j<N;j++)
+            rhoAB[i][j] = u[i]*conj(u[j]);
+            
+    n = sqrt(N);
+    nb = N/na;
+    for(i=0;i<na;i++)
+        for(j=0;j<na;j++)
+            rhoA[i][j]=rhoAB[i][j];
+    
+    for(k=1;k<nb;k++)
+        for(i=0;i<na;i++)
+            for(j=0;j<na;j++)
+                rhoA[i][j]+=rhoAB[k*na+i][k*na+j];
+        
+    eigval(na, rhoA, lambda);
+
+    //printV(n,lambda);
+    
+    /* take the real part */
+    for(i=0;i<na;i++)
+        lam[i]=creal(lambda[i]);
+
+    E = 0;
+    for(i=0;i<na;i++)
+        if(lam[i]>0)
+            E -= lam[i]*log2(lam[i]);
+
+    return E;
+
+}
+
+double unitarydecompose(int N, complex rho[NMAX][NMAX], complex U[NMAX][NMAX], int na, int M)
+{ /* entanglement of a mixed state rho measured by unitary decomposition U */
+    complex V[NMAX][NMAX], C[NMAX][NMAX], W[NMAX][NMAX];
+    complex lambda[NMAX], w[NMAX];    
+    double E, p, psqrt, Esub[NMAX], psub[NMAX];
+    int i, j, nb;
+
+    complex Vtemp[NMAX][NMAX];
+
+    eigvec(N,rho,V,lambda);
+    /* to be consistent with matlab code */
+    reorder_eigvec(N,V,lambda);
+    
+    clearM(C);
+    for(i=0;i<N;i++)
+        C[i][i] = sqrt(creal(lambda[i]));
+    //printf("V   ---\n");
+    //printM(stdout,N,V,6);
+    //printf("lambda-\n");
+    //printV(stdout,N,lambda,6);
+    
+    /* W = V*C*U' */
+    clearM(W);
+    matrixop('N','N',N,1.0,V,C,0.0,W);
+    //printM(stdout,N,W,6);
+    clearM(Vtemp);
+    for (i=0;i<N;i++)
+	for (j=0;j<N;j++)
+	   Vtemp[i][j]=W[i][j];
+    matrixop('N','C',M,1.0,Vtemp,U,0.0,W);
+    //printM(stdout,N,W,6);
+    
+    E = 0;
+    for(i=0;i<M;i++)
+    {
+        for(j=0;j<N;j++)
+            w[j] = W[j][i];
+        p=0;
+        for(j=0;j<N;j++)
+            p += conj(w[j])*w[j];
+
+        if(p>0)
+        {
+            psqrt = sqrt(p);
+            for(j=0;j<N;j++)
+                w[j] /= psqrt;
+            psub[i] = p;
+            Esub[i] = p * entanglement(N,w,na);
+        }
+        else
+        {
+            psub[i] = 0;
+            Esub[i] = 0;
+        }
+        E += Esub[i];
+    }
+
+    //for(i=0;i<N;i++) printf("psub[%d] = %f  Esub[%d] = %f\n",i,psub[i],i,Esub[i]);
+
+    return E;
+}
+
+double unitarydecompose2(int N, complex rho[NMAX][NMAX], complex U[NMAX][NMAX],
+                        complex dEdU[NMAX][NMAX], int na, int M)
+{ /* return E the entanglement (same as unitarydecompose()
+     as well as dEdU - the derivative */
+    complex rhoAB[NMAX][NMAX][NMAX], rhoA[NMAX][NMAX][NMAX], rhoA0[NMAX][NMAX];
+    complex Ai[NMAX][NMAX]; complex Li[NMAX];
+    complex A[NMAX][NMAX][NMAX]; double L[NMAX][NMAX];
+    complex Vp[NMAX][NMAX], V[NMAX][NMAX], C[NMAX][NMAX], W[NMAX][NMAX];
+    complex Dlambda[NMAX][NMAX], cU[NMAX][NMAX], dpdU[NMAX][NMAX];
+    complex DS[NMAX][NMAX], term1[NMAX][NMAX], term2[NMAX][NMAX], sumterm2[NMAX][NMAX];
+    complex pre1[NMAX], pre2[NMAX], tmp[NMAX], tmp2[NMAX][NMAX];
+    int t, u, r, s, ind[NMAX], flag[NMAX];
+    complex lambda[NMAX], w[NMAX];    
+    double E, p, psqrt, Esub[NMAX], psub[NMAX], lam[NMAX], lmax;
+    int i, j, k, m, n,nb;
+
+    complex Vtemp[NMAX][NMAX];
+
+    clearM(dEdU);
+    nb=N/na;
+    eigvec(N,rho,Vp,lambda);
+
+    /* to be consistent with matlab code */
+    reorder_eigvec(N,Vp,lambda);
+    
+    //printf("Vp  ---\n");
+    //printM(stdout,N,Vp,6);
+    //printf("lambda-\n");
+    //printV(stdout,N,lambda,6);
+
+    clearM(Dlambda);
+    for(i=0;i<N;i++)
+        Dlambda[i][i] = lambda[i];    
+    
+    clearM(C);
+    for(i=0;i<N;i++)
+        C[i][i] = sqrt(creal(lambda[i]));
+    
+    /* V = Vp*C */
+    clearM(W);
+    matrixop('N','N',N,1.0,Vp,C,0.0,V);
+
+    clearM(Vtemp);
+    for (i=0;i<N;i++)
+	for(j=0;j<N;j++)
+	   Vtemp[i][j]=V[i][j];
+    /* W = V*U' */
+    matrixop('N','C',M,1.0,V,U,0.0,W);
+
+
+    /* notice that array lambda is overwritten below */
+    E = 0;
+    for(i=0;i<M;i++) /* for every pure state */
+    {
+        for(j=0;j<N;j++)
+            w[j] = W[j][i];
+        p=0;
+        for(j=0;j<N;j++)
+            p += conj(w[j])*w[j];
+
+        if(p>0)
+        {
+            psqrt = sqrt(p);
+            for(j=0;j<N;j++)
+                w[j] /= psqrt;
+            
+            for(j=0;j<N;j++)
+                for(k=0;k<N;k++)
+                    rhoAB[j][k][i] = w[j]*conj(w[k]);
+            
+//            n = sqrt(N);
+
+            for(j=0;j<N;j++)
+                for(k=0;k<N;k++)
+                    rhoA[j][k][i]=rhoAB[j][k][i];
+    
+            for(m=1;m<nb;m++)
+                for(j=0;j<na;j++)
+                    for(k=0;k<na;k++)
+                        rhoA[j][k][i]+=rhoAB[m*na+j][m*na+k][i];
+
+            for(j=0;j<na;j++)
+                for(k=0;k<na;k++)
+                    rhoA0[j][k]=rhoA[j][k][i];
+            
+            eigvec(na, rhoA0, Ai, Li);
+
+//            printf("Ai ---\n");
+//            printM(stdout,n,Ai,6);
+//            printf("Li ---\n");
+//            printV(stdout,n,Li,6);
+            
+            
+            for(j=0;j<na;j++)
+                for(k=0;k<na;k++)
+                    A[j][k][i] = Ai[j][k];
+            
+            Esub[i] = 0;
+            for(j=0;j<na;j++)
+            {
+                lam[j]=creal(Li[j]);
+                L[j][i] =lam[j];
+                if(lam[j]>0)
+                    Esub[i] -= lam[j]*log2(lam[j]);
+            }
+            psub[i] = p;
+        }
+        else
+        {
+            psub[i] = 0;
+            Esub[i] = 0;
+        }
+        E += psub[i] * Esub[i];
+    }
+
+    clearM(DS);
+    for(i=0;i<M;i++)
+        DS[i][i] = Esub[i];
+
+    clearM(cU);
+    for(i=0;i<M;i++)
+        for(j=0;j<M;j++)
+            cU[i][j]=conj(U[i][j]);
+    
+    /* dpdU = conj(U)*diag(lambda) */
+    matrixop('N','N',M,1.0,cU,Dlambda,0.0,dpdU);
+    /* term1 = diag(S)*dpdU */
+    matrixop('N','N',M,1.0,DS,dpdU,0.0,term1);
+//    printM(stdout,M,term1,5);
+//    printf("dpdU ---\n");
+//    printM(stdout,N,dpdU,6);
+//    printf("Dlambda ---\n");
+//    printM(stdout,N,Dlambda,6);
+
+    clearM(sumterm2);
+    for(i=0;i<na;i++) /* sum over all eigenvalues of rhoA */
+    {
+        clearV(pre1);
+        for(j=0;j<M;j++)
+            if(L[i][j]>0) pre1[j] = -log2(exp(1)*L[i][j]);
+            else pre1[j] = 0;
+
+//        printf("pre1 ---\n"); /* yes */
+//        printV(stdout,N,pre1,6);
+        
+        clearM(term2);
+        for(t=0;t<na;t++)
+            for(u=0;u<na;u++)
+            {
+                clearV(pre2);
+                for(j=0;j<M;j++)
+                    pre2[j] = conj(A[t][i][j])*A[u][i][j];
+
+//                printf("pre2 ---\n"); /* no */
+//                printV(stdout,N,pre2,6);
+                
+                for(j=0;j<nb;j++)
+                {
+                    r = t+j*na; /* link between rhoA and rhoAB */
+                    s = u+j*na; /* link between rhoA and rhoAB */
+                    clearV(tmp);
+                    for(k=0;k<M;k++)
+                        tmp[k]=rhoAB[r][s][k];
+
+//                    printf("tmp ---\n"); /* yes */
+//                    printV(stdout,N,tmp,6);
+                    
+                    clearM(tmp2);
+                    /* tmp2 = W(r,:)'*conj(V(s,:)) - diag(tmp)*dpdU */
+                    for(k=0;k<M;k++)
+                        for(m=0;m<M;m++)
+                            tmp2[k][m] = W[r][k] * conj(V[s][m])
+                                        - tmp[k] * dpdU[k][m];
+
+//                    printf("tmp2 ---\n"); /* yes */
+//                    printM(stdout,N,tmp2,6);
+                    
+                    for(k=0;k<M;k++)
+                        for(m=0;m<M;m++)
+                            term2[k][m] = term2[k][m] + pre2[k]*tmp2[k][m];
+                }
+            }
+
+//        printf("term2 ---\n"); /* yes */
+//        printM(stdout,N,term2,6);
+        
+        for(k=0;k<M;k++)
+            for(m=0;m<M;m++)
+                sumterm2[k][m] += pre1[k] * term2[k][m];
+
+    }
+
+//    printf("term1 ---\n"); /* yes */
+//    printM(stdout,N,term1,6);
+//    printf("sumterm2 ---\n"); /* no */
+//    printM(stdout,N,sumterm2,6);
+    
+    for(k=0;k<M;k++)
+        for(m=0;m<M;m++)
+            dEdU[k][m] = term1[k][m] + sumterm2[k][m];
+
+    return E;
+}
+
+void Etheta(double* info, double x[3], complex rho[NMAX][NMAX], complex U[NMAX][NMAX], complex Ur[NMAX][NMAX],complex D[NMAX], int N, int na, int M)
+{
+  complex UrED[NMAX][NMAX], U2[NMAX][NMAX], lamH[NMAX];
+  int i,j,k;
+  double E[3];
+  double x0;
+  for (k=0;k<3;k++)
+    {
+            for(i=0;i<M;i++)
+                for(j=0;j<M;j++)
+                    UrED[i][j] = Ur[i][j]*cexp(csqrt(-1)*D[j]*x[k]);            
+//            printf("UrED --\n");
+//            printM(stdout,N,UrED,6);
+
+            matrixop('N','C',M,1.0,UrED,Ur,0.0,UrED);
+
+//            printf("UrED --\n");
+//            printM(stdout,N,UrED,6);
+
+            
+            matrixop('N','N',M,1.0,U,UrED,0.0,U2);
+            E[k] = unitarydecompose(N,rho,U2,na,M);
+//	printf("x=%f E[k]=%f\n",x[k],E[k]);
+    }
+//	printf("x[0]=%f %f %f E = %f %f %f\n ",x[0],x[1],x[2],E[0],E[1],E[2]);
+  x0=1.0/(-2.0)*( (E[0]-E[1])*(x[1]*x[1]-x[2]*x[2])-(E[1]-E[2])*(x[0]*x[0]-x[1]*x[1]) )/( (E[0]-E[1])*(x[1]-x[2])-(E[1]-E[2])*(x[0]-x[1]) )*( (x[0]*x[0]-x[1]*x[1])*(x[1]-x[2])-(x[1]*x[1]-x[2]*x[2])*(x[0]-x[1]) )/( (x[0]-x[1])*(x[1]*x[1]-x[2]*x[2])-(x[1]-x[2])*(x[0]*x[0]-x[1]*x[1]) );
+  //	printf("x0 = %f \n",x0);
+	info[0]=x0;
+  for(i=0;i<M;i++)
+                for(j=0;j<M;j++)
+                    UrED[i][j] = Ur[i][j]*cexp(csqrt(-1)*D[j]*x0);            
+//            printf("UrED --\n");
+//            printM(stdout,N,UrED,6);
+
+            matrixop('N','C',M,1.0,UrED,Ur,0.0,UrED);
+
+//            printf("UrED --\n");
+//            printM(stdout,N,UrED,6);
+
+            
+            matrixop('N','N',M,1.0,U,UrED,0.0,U2);
+            info[1] = unitarydecompose(N,rho,U2,na,M);
+//	printf("x0 = %f E0= %f\n ", x0,info[1]);
+ }
+	     
+
+double sumM(complex H[NMAX][NMAX],int N)
+{
+  double sumtmp=0;
+  int i,j;
+  for (i=0;i<N;i++)
+    for (j=0;j<N;j++)
+      sumtmp=sumtmp+H[i][j]*conj(H[i][j]);
+  return sumtmp;
+}
+  
+double negativity(complex rho[NMAX][NMAX], int N, int na)
+{
+  int j,i,n,k,l,a,b,temp,temp2,nb; 
+  double t;
+  n=sqrt(N);
+  nb=N/na;
+  complex rho1[NMAX][NMAX],rhotemp[nb][nb],tempI[nb][nb],eigen[N],swap;
+  for (i=0;i<N;i++)
+    for (j=0;j<N;j++)
+       rho1[i][j]=rho[i][j];
+  for (i=0;i<na;i++)
+  {
+    for (j=0;j<na;j++)
+    {
+      tempI[i][j]=0;
+      if (i==j) tempI[i][j]=1;
+    }
+  }
+  for (i=0;i<nb;i++)
+  {
+    temp=i*na;
+    for (j=0;j<nb;j++)
+    {
+      temp2=j*na;
+      for (k=0;k<na;k++)
+        for (l=0;l<na;l++)
+          rhotemp[k][l]=rho1[temp+k][temp2+l];      
+      for (a=0;a<na;a++)
+        for (b=0;b<=a;b++)
+        {
+          swap=rhotemp[a][b];
+          rhotemp[a][b]=rhotemp[b][a];
+          rhotemp[b][a]=swap;
+        }   
+      for (k=0;k<na;k++)
+        for (l=0;l<na;l++)
+          rho1[temp+k][temp2+l]=rhotemp[k][l];
+    }
+  }
+  eigval(N,rho1,eigen);
+  t=0;
+  for (i=0;i<N;i++)
+    t=t+cabs(eigen[i]);
+  t=t-1;
+  return t;
+} 
+
+
+void steep_go(double* info, double E, complex rho[NMAX][NMAX], complex U[NMAX][NMAX], complex Ur[NMAX][NMAX], complex D[NMAX], int N, double tol1, int na, int M)
+{
+  int i,j;
+  double E2,dtheta;
+  complex UrED[NMAX][NMAX],lamH[NMAX],U2[NMAX][NMAX];
+  dtheta=0.5;
+        while(1)
+        {
+            for(i=0;i<M;i++)
+                for(j=0;j<M;j++)
+                    UrED[i][j] = Ur[i][j]*cexp(csqrt(-1)*D[j]*dtheta);            
+//            printf("UrED --\n");
+//            printM(stdout,N,UrED,6);
+
+            matrixop('N','C',M,1.0,UrED,Ur,0.0,UrED);
+
+//            printf("UrED --\n");
+//            printM(stdout,N,UrED,6);
+
+            
+            matrixop('N','N',M,1.0,U,UrED,0.0,U2);
+            E2 = unitarydecompose(N,rho,U2,na,M);
+//            printf("E= %e E2 = %12.6e  dtheta = %12.6e\n",E, E2,dtheta);
+//            printf("U2 --\n");
+//            printM(stdout,N,U2,6);
+            
+            if(E2<E)
+                break;
+            else
+                dtheta*=0.5;
+            if(fabs(dtheta)<tol1)
+               break;        
+	}
+	info[0]=dtheta;
+	info[1]=E2;	
+//	printf("info0 = %f info1= %f",info[0],info[1]);
+	//	printf("babo");
+}
+double CGR7 (int N, complex rho[NMAX][NMAX], complex U[NMAX][NMAX], double delta, int maxstep, double tol, double tol1, int na, int M)
+{
+//	printf("check1\n");
+    int curstep, i, j, jp, printfreq;
+    complex dEdU[NMAX][NMAX], H[NMAX][NMAX], G[NMAX][NMAX], G0[NMAX][NMAX], H0[NMAX][NMAX], EYE[NMAX][NMAX],ZERO[NMAX][NMAX], tmp;
+    complex U2[NMAX][NMAX], Ur[NMAX][NMAX], Ur1[NMAX][NMAX], lamH[NMAX],lamG[NMAX], D[NMAX][NMAX], D1[NMAX][NMAX], UrED[NMAX][NMAX];
+    complex U3[NMAX][NMAX], U4[NMAX][NMAX],rhotemp[NMAX][NMAX];
+    double E, Eold, dtheta, E2, E3, E4,info[2],info1[2],sumtmp,sumtmp1;
+    double d[3],aa;
+    double data[maxstep],Hold[10],mean,dE,R,t;	
+    d[0]=0;d[1]=0.1;d[2]=0.2;E=1;
+    printfreq = 100;
+//	printf("check2\n");
+    eyeM(M,EYE);
+    clearM(ZERO);
+//	printM(stdout,N,rho,6);
+//	printf("check3\n");
+    for(curstep=1;curstep<=maxstep;curstep++)
+    {   
+//	printM(stdout,M,U,6); 
+       E = unitarydecompose2(N,rho,U,dEdU,na,M);
+ //       printf("E = %12.6e\n",E);
+ //       printM(stdout,M,U,6);
+        /* H = i*U'*conj(dEdU); H=H+H'; */
+        matrixop('T','N',M,-csqrt(-1.0),dEdU,U,0.0,H);
+// 	matrixop('N','
+        for(j=0;j<M;j++)
+            for(i=0;i<=j;i++)
+            {
+                H[i][j] += conj(H[j][i]);
+                H[j][i]  = conj(H[i][j]);
+            }
+//	eigvec(M,H,Ur,lamH);
+//	printM(stdout,N,H,6);
+//	printM(stdout,N,Ur,6);
+	for(i=0;i<M;i++)
+	  for(j=0;j<M;j++)
+	    G[i][j]=H[i][j];
+//	printf("HH--\n");
+//	printM(stdout,M,H,6);
+//	printf(" babo0\n ");	
+	if (curstep>1)
+	  {
+	    sumtmp=sumM(G0,M);
+	    sumtmp1=sumM(H,M);
+	    if (sumtmp!=0)
+	      {
+//		matrixop('N','N',N,1.0,ZERO,ZERO,sumtmp1/sumtmp,H0);
+		//H=H+H0*sumtmp1/sumtmp;
+		 matrixop('N','N',M,sumtmp1/sumtmp,EYE,H0,1.0,H);
+		for(j=0;j<M;j++)
+		    for(i=0;i<=j;i++)
+		    {
+			H[i][j]+=conj(H[j][i]);
+			H[j][i] =conj(H[i][j]);
+		    }		
+	        matrixop('N','N',M,0.0,ZERO,ZERO,0.5,H);
+		}
+	} 
+	   for (i=0;i<M;i++)
+	      for (j=0;j<M;j++)
+		{
+		  H0[i][j]=H[i][j];
+		  G0[i][j]=G[i][j];
+		}
+	  
+//        printf("H ---\n");
+//        printM(stdout,N,H,6);
+//	printM(stdout,N,U,6);
+//    	printf("babo0.5 %f %f \n",sumtmp, sumtmp1);    
+        /* update U */       
+        /* [Ur,D]=eig(H); U2=U*Ur*diag(cexp(i*D*dtheta))*Ur' */
+        eigvec(M, H, Ur, lamH);
+
+//        printf("lamH --\n");
+//        printV(stdout,N,lamH,6);
+//        printf("Ur --\n");
+//        printM(stdout,N,Ur,6);
+        dtheta = delta;
+//        printf("dtheta = %e",dtheta);
+	Etheta(info,d,rho,U,Ur,lamH,N,na,M);
+//	printf(" x0_1 = %f E0_1 = %f\n ",info[0],info[1]); 
+//	printM(stdout,N,U,6);
+	eigvec(M,G,Ur1,lamG);
+//	printf("G----\n");
+//        printM(stdout,M,G,6);
+//        printV(stdout,M,lamG,6);
+//	printM(stdout,N,Ur1,6);
+        steep_go(info1,E,rho,U,Ur1,lamG,N,tol1,na,M);
+//	printf(" x0_2 = %f E0_2 = %f\n ",info1[0],info1[1]); 
+//	printM(stdout,M,Ur1,5); 
+	if (info1[1]<info[1] || fabs(info[0])>1e5)
+	  {
+	    info[1]=info1[1];
+	    info[0]=info1[0];
+	    for (i=0;i<M;i++)
+	      {
+		lamH[i]=lamG[i];
+		for (j=0;j<M;j++)
+		  Ur[i][j]=Ur1[i][j];
+	      }
+	  }
+	
+//	printf("E %f info0 %f info1 %f \n",E,info[0], info[1]);
+	data[curstep-1]=info[1];
+//	if (info[1]>E && curstep>1)
+//        {
+//		printf("convergence reached by too small gradient(%e) \n",dtheta);
+//            printf("convergence reached at step = %d\n",curstep);
+//            break;
+//        }
+	dtheta=info[0];
+	E=info[1];
+        //update U=U*Ur*diag(exp(I*D*dtheta))
+            for(i=0;i<M;i++)
+                for(j=0;j<M;j++)
+                    UrED[i][j] = Ur[i][j]*cexp(csqrt(-1)*lamH[j]*dtheta);            
+//            printf("UrED --\n");
+//            printM(stdout,N,UrED,6);
+
+            matrixop('N','C',M,1.0,UrED,Ur,0.0,UrED);
+
+//            printf("UrED --\n");
+//            printM(stdout,N,UrED,6);
+
+            
+            matrixop('N','N',M,1.0,U,UrED,0.0,U);
+
+//            printf("E2 = %12.6e  dtheta = %12.6e\n",E2,dtheta);
+//            printf("U2 --\n");
+//            printM(stdout,N,U2,6);
+        if (curstep>10)
+	{
+		dE=fabs(E-data[curstep-2]);
+		Hold[(curstep%10)]=dE;
+	}
+	if (curstep>20)
+	{
+	mean=0;
+	for (i=0;i<10;i++)
+	mean=mean+Hold[i];
+	mean=mean/10.0;
+//	printf("mean %e tol %e\n",mean,tol);
+	if (mean<tol) 
+	{
+//		printf("convergence reached by ave(dE)<tol\n");
+//		printf("convergence reached at step = %d\n", curstep);
+		break;
+	}
+	}
+// 
+//	if (curstep>2) break;
+        if(fabs(dtheta)<tol1)
+        {
+//	    printf("convergence reached by small gradient\n");	
+//            printf("dtheta=%e, convergence reached at step = %d\n",dtheta, curstep);
+	    curstep=curstep-1;
+            break;
+        }
+
+    
+        /* double check self-consistency */
+/*        if(curstep%printfreq==0)
+        {
+            printf("curstep = %7d E = %.12e dE = %.5e dtheta = %.5e\n",curstep,E,dE,dtheta);
+//            printf("Eold = %.10e  Enew = %.10e\n",Eold,Enew);
+//            
+//            tmp=0;
+//            for(i=0;i<N;i++)
+//                for(j=0;j<N;j++)
+//                    tmp+= (dEdU[i][j]+dEdUold[i][j])*(U[i][j]-Uold[i][j]);
+//            printf("dE = %.10e   (estimate) %.10e  dtheta=%e\n",E-Eold,tmp,dtheta);
+        }*/
+        
+    }
+    t=negativity(rho,N,na);
+    matrixop('N','N',N,1.0,rho,rho,0.0,rhotemp);
+    R=0;
+    for (i=0;i<N;i++)
+	R=R+rhotemp[i][i];
+    R=1.0/R;
+//    E = unitarydecompose2(N,rho,U,dEdU);   
+    aa=unitarydecompose(N,rho,U,na,M);
+    E=data[curstep-1];
+//    if (curstep>maxstep) E=10;
+//    printf("Echeck = %f curstep = %7d E = %.12e dE = %.5e dtheta = %.5e R = %.5f t = %.6f\n",aa, curstep,E,dE,dtheta,R,t);
+    
+    return E;
+}    
+
+    
+int main(int argc, void * argv[])
+{
+    unsigned int seed,st1,st2;
+    int M, N, i, N0,maxstep, na, k, Ndm;
+    complex  rho[NMAX][NMAX];  /* density matrix */
+    complex    U[NMAX][NMAX];  /* unitary matrix */
+    complex dEdU[NMAX][NMAX];
+    complex    b[NMAX];        /* complex vector */
+    double E, delta,tol,tol1;
+    double Emin,R,t; 
+    double *Estack;
+    FILE *fp;
+    struct timeval mytime;
+
+    gettimeofday(&mytime,NULL);
+    /* printf("%ld:%ld\n",mytime.tv_sec, mytime.tv_usec);  */
+    st1=mytime.tv_sec;
+    st2=mytime.tv_usec;
+    /* disclaimer(); */
+
+
+    /* default values: their meaning is explained below */
+    tol=1e-15;
+    tol1=1e-15;
+    N0=5;
+    N=8;
+    na=2;
+    Ndm=128;
+
+    M=NMAX; /* M is the dimension of the decomposition unitary matrix,
+               you need to modify NMAX in util.h if you want to change this number */
+
+    /* hard coded settings for conjugate gradient relaxation */
+    delta = 0.5;  maxstep = 100000; 
+
+    /* specifies random seed for random number generator */
+    if(argc==1) 
+    { /* if there is no argment in the command line
+         then print out usage information */
+         printf("Usage: (also see README.txt)\n");
+         printf("%s [seed=0] [tol=1e-15] [tol1=1e-15] [N0=5] [N=8] [na=2] [Ndm=128]\n",argv[0]);
+         return 0;
+    } 
+    else
+    { /* there is at least one argument in the command line
+         then use the first number as random seed -- if it is non-zero */
+        sscanf(argv[1],"%ud",&seed);
+	if (seed==0)
+	{ /* use time as random seed */
+                st1=st1*1000000+st2;
+		srand48(st1);
+	}
+	else
+	{ /* use first value in command line as random seed */
+		srand48(seed); 
+	}
+    }
+
+   /* specifies tol - convergence criteria (absolute value of entanglement) */ 
+   if(argc>2)
+   {
+	sscanf(argv[2],"%lf",&tol);
+   }
+
+   /* specifies tol1 - convergence criteria (residual gradient) */ 
+   if(argc>3)
+   {
+        sscanf(argv[3],"%lf",&tol1);
+   }
+  
+   /* specifies N0 - number of local minimum searches */ 
+   if(argc>4)
+   {
+	sscanf(argv[4],"%d",&N0);
+   }
+
+   /* specifies N = na*nb - dimension of Hilbert space of two partite system */ 
+   if(argc>5)
+   {
+	sscanf(argv[5],"%d",&N);
+   }
+
+   /* specifies na - dimension of Hilbert space qudit a (default = 2) */ 
+   if(argc>6)
+   {
+	sscanf(argv[6],"%d",&na);
+   }
+
+   /* specifies Ndm - number of density matrices to be analyzed in this run */ 
+   if(argc>7)
+   {
+	sscanf(argv[7],"%d",&Ndm);
+   }
+
+   Estack = malloc(N0*sizeof(double)); 
+
+    
+    /* print to matlab input file */
+    /*
+    randDM(N,rho);
+    randUM_PRA(M,U);
+    fp = fopen("../matlab/entangleM1/rhoU0.m","w");
+    fprintf(fp,"rho = [\n");
+    printM(fp,N,rho,16);
+    fprintf(fp,"];\n");
+    fprintf(fp,"U   = [\n");
+    printM(fp,M,U  ,16);
+    fprintf(fp,"];\n");
+    fclose(fp);
+    */
+    
+    
+   for (k=0;k<Ndm;k++)
+   { /* generating random density matrix */
+      randDM(N,rho);
+
+      /* find N0 local minima through cgrelax, Emin is the lowest among them */
+      for (i=0;i<N0;i++)
+      {  /* generating random decomposition unitary matrix */
+         randUM_PRA(M,U);
+         Estack[i]=CGR7(N,rho,U,delta,maxstep,tol,tol1,na,M);
+         if (i==0) 
+         {
+             Emin = Estack[i];
+         } else {
+            if (Estack[i] < Emin) Emin=Estack[i];
+         }
+      }
+   
+      /* compute negativity of rho (for comparison) */ 
+      t=negativity(rho,N,na);
+
+      /* compute participation ratio */
+      matrixop('N','N',N,1.0,rho,rho,0.0,rho);
+      R=0;
+      for (i=0;i<N;i++) R=R+rho[i][i];
+      R=1.0/R;
+
+      /* Print out results */
+      /* printf("Emin = %.12e R_rho = %.5f t_rho = %.6f\n", Emin, R, t); */ 
+
+      /* Save results into data file */
+      fp = fopen("E_R_t_stat.dat","a");
+      fprintf(fp,"%25.12e %10.6f %10.6f\n",Emin,R,t);
+      fclose(fp);
+    
+    }
+    free(Estack);
+    return 0;
+}
+
